@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.186"
+openssl = "0.10.81"
+tempfile = "3.27.0"

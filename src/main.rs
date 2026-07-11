@@ -1,4 +1,5 @@
 mod finders;
+mod file;
 
 use std::{
     fs,
@@ -9,7 +10,7 @@ use finders::Reader;
 
 fn main() {
     let producer = finders::create(
-        false,
+        true,
         false,
         vec![
             path::PathBuf::from("."),
