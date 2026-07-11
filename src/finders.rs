@@ -53,7 +53,7 @@ fn write_message(fd: c_int, message: &[u8]) -> io::Result<()> {
     }
 }
 
-pub trait Reader {
+pub trait Reader: Sync {
     fn read_message(&self) -> Result<Option<String>, Box<dyn Error>>;
 }
 

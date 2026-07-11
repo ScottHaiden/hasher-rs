@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     ffi::{
         CString,
-        c_int,
         c_void,
     },
     fs,
@@ -40,7 +39,7 @@ impl File {
     fn call_getxattr(&self, attr_name: &str, result: &mut Vec<u8>) -> Result<usize, Error> {
         let path = CString::new(self.path().to_str().unwrap())?;
         let name = CString::new(xattr_name(attr_name).to_string()).unwrap();
-        let result_ptr = result.as_mut_ptr() as *mut libc::c_void;
+        let result_ptr = result.as_mut_ptr() as *mut c_void;
 
         let amount: isize = unsafe {
             libc::getxattr(path.as_ptr(), name.as_ptr(), result_ptr, result.len())
@@ -86,7 +85,7 @@ impl File {
     pub fn set_attr(&self, attr_name: &str, value: &[u8]) -> Result<(), Error> {
         let path = CString::new(self.path().to_str().unwrap())?;
         let name = CString::new(xattr_name(attr_name).to_string()).unwrap();
-        let val = value.as_ptr() as *const libc::c_void;
+        let val = value.as_ptr() as *const c_void;
 
         let result: i32 = unsafe {
             libc::setxattr(path.as_ptr(), name.as_ptr(), val, value.len(), 0)
