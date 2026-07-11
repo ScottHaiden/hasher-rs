@@ -3,37 +3,11 @@ use std::{
     fs,
     io,
     path,
+    sync::atomic,
     thread,
 };
 
 use libc;
-
-struct FdHolder {
-    fd: libc::c_int,
-}
-
-impl FdHolder {
-    fn new(fd: libc::c_int) -> Self {
-        Self { fd: fd }
-    }
-
-}
-
-impl std::ops::Deref for FdHolder {
-    type Target = libc::c_int;
-
-    fn deref(&self) -> &libc::c_int { &self.fd }
-}
-
-impl Drop for FdHolder {
-    fn drop(&mut self) {
-        let result = unsafe { libc::close(self.fd) };
-        if result < 0 {
-            let err = io::Error::last_os_error();
-            panic!("close({}) failed ({})", self.fd, err);
-        }
-    }
-}
 
 fn visit_dirs(
         dir: &path::Path,
@@ -71,12 +45,39 @@ pub trait Reader {
     fn read_message(&self) -> Result<Option<String>, Box<dyn error::Error>>;
 }
 
-pub struct SocketReader {
+struct FdHolder {
+    fd: libc::c_int,
+}
+
+impl FdHolder {
+    fn new(fd: libc::c_int) -> Self {
+        Self { fd: fd }
+    }
+
+}
+
+impl std::ops::Deref for FdHolder {
+    type Target = libc::c_int;
+
+    fn deref(&self) -> &libc::c_int { &self.fd }
+}
+
+impl Drop for FdHolder {
+    fn drop(&mut self) {
+        let result = unsafe { libc::close(self.fd) };
+        if result < 0 {
+            let err = io::Error::last_os_error();
+            panic!("close({}) failed ({})", self.fd, err);
+        }
+    }
+}
+
+struct SocketReader {
     fd: FdHolder,
 }
 
 impl SocketReader {
-    pub fn new(follow_symlinks: bool, paths: Vec<path::PathBuf>) -> io::Result<Self> {
+    fn new(follow_symlinks: bool, paths: Vec<path::PathBuf>) -> io::Result<Self> {
         let mut fds: [libc::c_int; 2] = [0; 2];
 
         let result = unsafe {
@@ -129,4 +130,53 @@ impl Reader for SocketReader {
         let parsed = String::from_utf8(buf)?;
         Ok(Some(parsed))
     }
+}
+
+struct ListReader {
+    cur: atomic::AtomicUsize,
+    paths: Vec<path::PathBuf>,
+}
+
+impl ListReader {
+    fn new(paths: Vec<path::PathBuf>) -> io::Result<Self> {
+        Ok(Self {
+            cur: atomic::AtomicUsize::new(0usize),
+            paths: paths,
+        })
+    }
+
+    fn get_next(&self) -> Option<usize> {
+        let mut val = self.cur.load(atomic::Ordering::Relaxed);
+        loop {
+            if val >= self.paths.len() { return None; }
+            let result = self.cur.compare_exchange_weak(
+                val,
+                val + 1,
+                atomic::Ordering::Relaxed, atomic::Ordering::Relaxed);
+            if result.is_ok() { return Some(val); }
+            val = result.err().unwrap();
+        }
+    }
+}
+
+impl Reader for ListReader {
+    fn read_message(&self) -> Result<Option<String>, Box<dyn error::Error>> {
+        let idx = self.get_next();
+        if idx.is_none() { return Ok(None); }
+        let path = self.paths[idx.unwrap()]
+            .to_str()
+            .expect("decode failed")
+            .to_owned();
+        return Ok(Some(path));
+    }
+}
+
+pub fn create(
+    recursive: bool,
+    follow_symlinks: bool,
+    paths: Vec<path::PathBuf>) -> io::Result<Box<dyn Reader>> {
+    if recursive {
+        return Ok(Box::new(SocketReader::new(follow_symlinks, paths)?));
+    }
+    return Ok(Box::new(ListReader::new(paths)?));
 }

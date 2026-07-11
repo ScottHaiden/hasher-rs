@@ -8,7 +8,8 @@ use std::{
 use finders::Reader;
 
 fn main() {
-    let producer = finders::SocketReader::new(
+    let producer = finders::create(
+        false,
         false,
         vec![
             path::PathBuf::from("."),
