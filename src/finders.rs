@@ -1,23 +1,9 @@
-use std::{
-    error::Error,
-    ffi::{
-        c_int,
-        c_void,
-    },
-    fs::{
-        self,
-        DirEntry,
-    },
-    io,
-    path::{
-        Path,
-        PathBuf,
-    },
-    sync::atomic::{
-        AtomicUsize,
-        Ordering,
-    },
-};
+use std::error::Error;
+use std::ffi::{c_int, c_void};
+use std::fs::{self, DirEntry};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libc;
 

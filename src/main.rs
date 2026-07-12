@@ -1,17 +1,9 @@
 mod file;
 mod finders;
 
-use std::{
-    collections::HashMap,
-    io::{
-        Error,
-        ErrorKind,
-    },
-    path::{
-        Path,
-        PathBuf,
-    },
-};
+use std::collections::HashMap;
+use std::io::{Error, ErrorKind};
+use std::path::{Path, PathBuf};
 
 use clap::{Parser};
 
@@ -34,7 +26,7 @@ fn not_found(what: &str) -> ErrorOnly {
 #[command(version, about, long_about = None)]
 struct Args {
     /// List of hash algorithms to use
-    #[arg(short = 'C', default_values = ["sha512", "blake2b512", "sha3-512"])]
+    #[arg(short = 'C', default_values = ["blake2b512", "sha3-512", "sha512"])]
     hashes: Vec<String>,
 
     /// Set task: Identify files without hashes.
@@ -102,6 +94,16 @@ impl Args {
                 .get();
         }
         return 1;
+    }
+}
+
+struct HashUtil {
+    hashes: Vec<String>,
+}
+
+impl HashUtil {
+    fn new(hashes: Vec<String>) -> Self {
+        Self { hashes: hashes }
     }
 
     fn print_one(&self, hash: &str, hashtype: &str, path: &str) {
@@ -227,22 +229,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if task.is_none() { return Ok(()); }
 
     let job = match task.unwrap().as_str() {
-        "checker"       => Args::check_hash,
-        "find_unhashed" => Args::find_unhashed,
-        "print_hashes"  => Args::print_hash,
-        "reset_hashes"  => Args::reset_hashes,
-        "hasher"        => Args::set_hashes,
+        "checker"       => HashUtil::check_hash,
+        "find_unhashed" => HashUtil::find_unhashed,
+        "print_hashes"  => HashUtil::print_hash,
+        "reset_hashes"  => HashUtil::reset_hashes,
+        "hasher"        => HashUtil::set_hashes,
         _               => panic!("UNKNOWN TASK"),
     };
 
     let num_workers = args.get_worker_count();
-    let producer = finders::create(args.recurse, args.follow_symlinks, args.paths.clone())?;
+    let hash_util = HashUtil::new(args.hashes);
+    let producer = finders::create(args.recurse, args.follow_symlinks, args.paths)?;
 
     let result = std::thread::scope(|s| {
         let mut workers = Vec::new();
 
         for _ in 0..num_workers {
-            let args = &args;
+            let hash_util = &hash_util;
             let producer = &producer;
 
             workers.push(s.spawn(move || {
@@ -258,7 +261,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if msg.is_none() { return true; }
 
-                    let result = job(&args, Path::new(&msg.unwrap()));
+                    let result = job(&hash_util, Path::new(&msg.unwrap()));
                     match result {
                         Ok(_) => continue,
                         Err(e) => {
