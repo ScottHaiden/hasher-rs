@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser};
 
-type BoxedError = Box<dyn std::error::Error>;
-type ErrorOnly = Result<(), BoxedError>;
+type BoolResult = Result<bool, Box<dyn std::error::Error>>;
 
 fn is_data_not_found_error(err: &std::io::Error) -> bool {
     if let Some(raw) = err.raw_os_error() {
@@ -17,7 +16,7 @@ fn is_data_not_found_error(err: &std::io::Error) -> bool {
     return false;
 }
 
-fn not_found(what: &str) -> ErrorOnly {
+fn not_found(what: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let message = format!("Not found: {what}");
     return Err(Box::new(Error::new(ErrorKind::NotFound, message)));
 }
@@ -106,17 +105,21 @@ impl HashUtil {
         Self { hashes: hashes }
     }
 
-    fn print_one(&self, hash: &str, hashtype: &str, path: &str) {
-        println!("{} [{:>10}] {}", hash, hashtype, path);
+    fn print_one(&self, hash: &[u8], hashtype: &str, path: &str) {
+        let hex = hash.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join("");
+        println!("{} [{:>10}] {}", hex, hashtype, path);
     }
 
-    fn print_hash(&self, path: &Path) -> ErrorOnly {
+    fn print_hash(&self, path: &Path) -> BoolResult {
         if !path.is_file() { return not_found(path.to_str().unwrap()); }
 
         let file = file::File::new(path);
 
         for hash in self.hashes.iter() {
-            let result = file.get_attr_hex(hash);
+            let result = file.get_attr(hash);
             if let Ok(value) = result {
                 self.print_one(&value, hash, path.to_str().unwrap());
                 continue;
@@ -127,10 +130,10 @@ impl HashUtil {
             }
         }
 
-        return Ok(());
+        return Ok(true);
     }
 
-    fn find_unhashed(&self, path: &Path) -> ErrorOnly {
+    fn find_unhashed(&self, path: &Path) -> BoolResult {
         if !path.is_file() { return not_found(path.to_str().unwrap()); }
 
         let file = file::File::new(path);
@@ -143,16 +146,16 @@ impl HashUtil {
             let err: Error = hash.err().unwrap();
             if is_data_not_found_error(&err) {
                 println!("{}", path.display());
-                return Ok(());
+                break;
             }
 
             return Err(Box::new(err));
         }
 
-        return Ok(());
+        return Ok(true);
     }
 
-    fn check_hash(&self, path: &Path) -> ErrorOnly {
+    fn check_hash(&self, path: &Path) -> BoolResult {
         if !path.is_file() { return not_found(path.to_str().unwrap()); }
 
         let file = file::File::new(path);
@@ -167,6 +170,7 @@ impl HashUtil {
 
         let actual_hashes: HashMap<String, Vec<u8>> = file.find_hashes(&hashes_to_check)?;
 
+        let mut ret = true;
         for hash in hashes_to_check {
             let key: String = hash.into();
             let expected: &Vec<u8> = expected_hashes.get(&key).unwrap();
@@ -175,14 +179,14 @@ impl HashUtil {
                 println!("{}: {} OK", path.to_str().unwrap(), hash);
                 continue;
             }
-            let message: String = format!("{}: incorrect {}", path.to_str().unwrap(), hash);
-            return Err(Box::new(Error::new(ErrorKind::InvalidData, message)));
+            println!("{}: {} incorrect", path.to_str().unwrap(), hash);
+            ret = false;
         }
 
-        return Ok(());
+        return Ok(ret);
     }
 
-    fn set_hashes(&self, path: &Path) -> ErrorOnly {
+    fn set_hashes(&self, path: &Path) -> BoolResult {
         if !path.is_file() { return not_found(path.to_str().unwrap()); }
 
         let file = file::File::new(path);
@@ -201,12 +205,15 @@ impl HashUtil {
 
         let hashes = file.find_hashes(&needed)?;
 
-        for (hash, val) in hashes { file.set_attr(&hash, &val)?; }
+        for (hash, val) in hashes {
+            file.set_attr(&hash, &val)?;
+            self.print_one(&val, &hash, path.to_str().unwrap());
+        }
 
-        return Ok(());
+        return Ok(true);
     }
 
-    fn reset_hashes(&self, path: &Path) -> ErrorOnly {
+    fn reset_hashes(&self, path: &Path) -> BoolResult {
         if !path.is_file() { return not_found(path.to_str().unwrap()); }
 
         let file = file::File::new(path);
@@ -218,7 +225,7 @@ impl HashUtil {
             }
         }
 
-        return Ok(());
+        return Ok(true);
     }
 }
 
@@ -239,7 +246,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_workers = args.get_worker_count();
     let hash_util = HashUtil::new(args.hashes);
-    let producer = finders::create(args.recurse, args.follow_symlinks, args.paths)?;
+    let paths: Vec<PathBuf> = if args.paths.len() == 0 {
+        vec![PathBuf::from(".")]
+    } else {
+        args.paths
+    };
+    let producer = finders::create(args.recurse, args.follow_symlinks, paths)?;
 
     let result = std::thread::scope(|s| {
         let mut workers = Vec::new();
@@ -249,27 +261,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let producer = &producer;
 
             workers.push(s.spawn(move || {
+                let mut ret = true;
                 loop {
-                    let msg = producer.read_message();
+                    let msg = match producer.read_message() {
+                        Err(e) => panic!("Failed to read message: {e}"),
+                        Ok(None) => break,
+                        Ok(Some(msg)) => msg,
+                    };
 
-                    if let Err(e) = msg {
-                        eprintln!("Failed to read message: {}", e);
-                        return false;
-                    }
-
-                    let msg = msg.ok().unwrap();
-
-                    if msg.is_none() { return true; }
-
-                    let result = job(&hash_util, Path::new(&msg.unwrap()));
+                    let result = job(&hash_util, Path::new(&msg));
                     match result {
-                        Ok(_) => continue,
+                        Ok(result) => ret &= result,
                         Err(e) => {
                             eprintln!("Worker encountered error: {}", e);
                             return false;
                         }
                     }
                 }
+                ret
             }));
         }
 

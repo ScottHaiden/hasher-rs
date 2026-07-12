@@ -63,14 +63,6 @@ impl File {
         return Ok(result);
     }
 
-    pub fn get_attr_hex(&self, attrname: &str) -> Result<String, Error> {
-        let bytes: Vec<u8> = self.get_attr(attrname)?;
-        return Ok(bytes.iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(""));
-    }
-
     pub fn remove_attr(&self, attrname: &str) -> Result<(), Error> {
         let path = CString::new(self.path().to_str().unwrap())?;
         let name = CString::new(xattr_name(attrname).to_string()).unwrap();
@@ -161,7 +153,6 @@ mod tests {
 
         // Before...
         assert_eq!(file.get_attr(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
-        assert_eq!(file.get_attr_hex(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
         assert_eq!(file.remove_attr(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
 
         // set...
@@ -169,14 +160,12 @@ mod tests {
 
         // Get afterwards...
         assert_eq!(file.get_attr(HASH_NAME).unwrap(), Vec::from(HASH_VAL));
-        assert_eq!(file.get_attr_hex(HASH_NAME).unwrap(), HASH_HEX);
 
         // Reset...
         assert!(file.remove_attr(HASH_NAME).is_ok());
 
         // After...
         assert_eq!(file.get_attr(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
-        assert_eq!(file.get_attr_hex(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
         assert_eq!(file.remove_attr(HASH_NAME).err().unwrap().raw_os_error(), Some(ERRNO_ENODATA));
     }
 
