@@ -203,6 +203,8 @@ impl HashUtil {
             .map(|(hash, _val)| hash.as_str())
             .collect();
 
+        if needed.len() == 0 { return Ok(true) }
+
         let hashes = file.find_hashes(&needed)?;
 
         for (hash, val) in hashes {
