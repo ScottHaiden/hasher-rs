@@ -110,7 +110,11 @@ impl HashUtil {
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join("");
-        println!("{} [{:>10}] {}", hex, hashtype, path);
+        if self.hashes.len() > 1 {
+            println!("{} [{:>10}] {}", hex, hashtype, path);
+        } else {
+            println!("{}  {}", hex, path);
+        }
     }
 
     fn print_hash(&self, path: &Path) -> BoolResult {
