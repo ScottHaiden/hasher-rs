@@ -114,10 +114,10 @@ impl HashUtil {
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join("");
-        if self.hashes.len() > 1 {
-            println!("{} [{:>10}] {}", hex, hashtype, path);
-        } else {
+        if self.hashes.len() == 1 {
             println!("{}  {}", hex, path);
+        } else {
+            println!("{} [{:>10}] {}", hex, hashtype, path);
         }
     }
 
@@ -211,7 +211,7 @@ impl HashUtil {
             .map(|(hash, _val)| hash.as_str())
             .collect();
 
-        if needed.len() == 0 { return Ok(true) }
+        if needed.is_empty() { return Ok(true) }
 
         let hashes = file.find_hashes(&needed)?;
 
@@ -275,14 +275,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let num_workers = args.get_worker_count();
-    let paths: Vec<PathBuf> = if args.paths.len() == 0 {
-        vec![PathBuf::from(".")]
-    } else {
-        args.paths
-    };
+
     let hash_util = HashUtil::new(
         args.hashes,
-        finders::create(args.recurse, args.follow_symlinks, paths)?,
+        finders::create(args.recurse, args.follow_symlinks, args.paths)?,
     );
 
     let result = std::thread::scope(|s| {

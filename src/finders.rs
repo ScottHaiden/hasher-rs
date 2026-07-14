@@ -76,6 +76,11 @@ struct SocketReader {
 
 impl SocketReader {
     fn new(follow_symlinks: bool, paths: Vec<PathBuf>) -> io::Result<Self> {
+        let paths = if !paths.is_empty() {
+            paths
+        } else {
+            vec![PathBuf::from(".")]
+        };
         let mut fds: [c_int; 2] = [0; 2];
 
         let result = unsafe {
