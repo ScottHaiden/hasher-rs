@@ -16,7 +16,7 @@ fn is_data_not_found_error(err: &std::io::Error) -> bool {
     return false;
 }
 
-fn not_found(what: &str) -> Result<bool, Box<dyn std::error::Error>> {
+fn not_found(what: &str) -> BoolResult {
     let message = format!("Not found: {what}");
     return Err(Box::new(Error::new(ErrorKind::NotFound, message)));
 }
@@ -98,11 +98,15 @@ impl Args {
 
 struct HashUtil {
     hashes: Vec<String>,
+    producer: Box<dyn finders::Reader>,
 }
 
 impl HashUtil {
-    fn new(hashes: Vec<String>) -> Self {
-        Self { hashes: hashes }
+    fn new(hashes: Vec<String>, producer: Box<dyn finders::Reader>) -> Self {
+        Self {
+            hashes: hashes,
+            producer: producer,
+        }
     }
 
     fn print_one(&self, hash: &[u8], hashtype: &str, path: &str) {
@@ -233,6 +237,26 @@ impl HashUtil {
 
         return Ok(true);
     }
+
+    fn run_loop<T: Fn(&Self, &Path) -> BoolResult>(&self, callback: T) -> bool {
+        let mut ret = true;
+        loop {
+            let msg = match self.producer.read_message() {
+                Err(e) => panic!("Failed to read message: {e}"),
+                Ok(None) => break,
+                Ok(Some(msg)) => msg,
+            };
+
+            match callback(&self, Path::new(&msg)) {
+                Ok(result) => ret &= result,
+                Err(e) => {
+                    eprintln!("Worker encountered error: {e}");
+                    return false;
+                },
+            }
+        }
+        ret
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -251,44 +275,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let num_workers = args.get_worker_count();
-    let hash_util = HashUtil::new(args.hashes);
     let paths: Vec<PathBuf> = if args.paths.len() == 0 {
         vec![PathBuf::from(".")]
     } else {
         args.paths
     };
-    let producer = finders::create(args.recurse, args.follow_symlinks, paths)?;
+    let hash_util = HashUtil::new(
+        args.hashes,
+        finders::create(args.recurse, args.follow_symlinks, paths)?,
+    );
 
     let result = std::thread::scope(|s| {
         let mut workers = Vec::new();
 
-        for _ in 0..num_workers {
+        for _ in 1..num_workers {
             let hash_util = &hash_util;
-            let producer = &producer;
-
-            workers.push(s.spawn(move || {
-                let mut ret = true;
-                loop {
-                    let msg = match producer.read_message() {
-                        Err(e) => panic!("Failed to read message: {e}"),
-                        Ok(None) => break,
-                        Ok(Some(msg)) => msg,
-                    };
-
-                    let result = job(&hash_util, Path::new(&msg));
-                    match result {
-                        Ok(result) => ret &= result,
-                        Err(e) => {
-                            eprintln!("Worker encountered error: {}", e);
-                            return false;
-                        }
-                    }
-                }
-                ret
-            }));
+            workers.push(s.spawn(move || hash_util.run_loop(&job)));
         }
 
-        let mut ret = true;
+        let mut ret = hash_util.run_loop(&job);
         for worker in workers {
             let result = worker.join().expect("Failed to join worker");
             ret &= result;
