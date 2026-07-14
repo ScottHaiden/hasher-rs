@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::{c_int, c_void};
 use std::fs::{self, DirEntry};
@@ -10,13 +11,17 @@ use libc;
 fn visit_dirs(
         dir: &Path,
         follow_symlinks: bool,
+        seen: &mut HashSet<PathBuf>,
         cb: &dyn Fn(&DirEntry)) -> io::Result<()> {
+    let canon = dir.canonicalize()?;
+    if seen.contains(&canon) { return Ok(()); }
+    seen.insert(canon);
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path: PathBuf = entry.path();
         if !follow_symlinks && path.is_symlink() { continue; }
         if path.is_dir() {
-            visit_dirs(&path, follow_symlinks, cb)?;
+            visit_dirs(&path, follow_symlinks, &mut *seen, cb)?;
         } else if path.is_file() {
             cb(&entry);
         }
@@ -97,8 +102,9 @@ impl SocketReader {
         let wfd = FdHolder::new(fds[1]);
 
         std::thread::spawn(move || {
+            let mut seen = HashSet::new();
             for path in paths {
-                visit_dirs(&path, follow_symlinks, &|e| {
+                visit_dirs(&path, follow_symlinks, &mut seen, &|e| {
                     let message = e.path()
                         .to_str()
                         .expect("failed to convert to unicode")
