@@ -110,10 +110,20 @@ impl HashUtil {
     }
 
     fn print_one(&self, hash: &[u8], hashtype: &str, path: &str) {
-        let hex = hash.iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join("");
+        let get_byte = |byte: &u8| {
+            let nybbles = [
+                '0', '1', '2', '3', '4', '5', '6', '7',
+                '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+            ];
+            return [
+                nybbles[usize::from(byte >> 4 & 0x0f)],
+                nybbles[usize::from(byte >> 0 & 0x0f)],
+            ];
+        };
+        let hex: String = hash.iter()
+            .map(get_byte)
+            .flatten()
+            .collect();
         if self.hashes.len() == 1 {
             println!("{}  {}", hex, path);
         } else {
