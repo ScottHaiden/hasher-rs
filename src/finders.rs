@@ -8,25 +8,37 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libc;
 
-fn visit_dirs(
-        dir: &Path,
-        follow_symlinks: bool,
-        seen: &mut HashSet<PathBuf>,
-        cb: &dyn Fn(&DirEntry)) -> io::Result<()> {
-    let canon = dir.canonicalize()?;
-    if seen.contains(&canon) { return Ok(()); }
-    seen.insert(canon);
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path: PathBuf = entry.path();
-        if !follow_symlinks && path.is_symlink() { continue; }
-        if path.is_dir() {
-            visit_dirs(&path, follow_symlinks, &mut *seen, cb)?;
-        } else if path.is_file() {
-            cb(&entry);
+struct Visitor {
+    seen: HashSet<PathBuf>,
+    follow_symlinks: bool,
+}
+
+impl Visitor {
+    fn new(follow_symlinks: bool) -> Self {
+        Self {
+            seen: HashSet::new(),
+            follow_symlinks: follow_symlinks,
         }
     }
-    Ok(())
+
+    fn visit(&mut self, dir: &Path, cb: &dyn Fn(&DirEntry)) -> io::Result<()> {
+        let canon = dir.canonicalize()?;
+        if self.seen.contains(&canon) { return Ok(()); }
+        self.seen.insert(canon);
+
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path: PathBuf = entry.path();
+            if !self.follow_symlinks && path.is_symlink() { continue; }
+            if path.is_dir() {
+                self.visit(&path, cb)?;
+            }
+            if path.is_file() {
+                cb(&entry);
+            }
+        }
+        Ok(())
+    }
 }
 
 fn write_message(fd: c_int, message: &[u8]) -> io::Result<()> {
@@ -102,9 +114,9 @@ impl SocketReader {
         let wfd = FdHolder::new(fds[1]);
 
         std::thread::spawn(move || {
-            let mut seen = HashSet::new();
+            let mut visitor = Visitor::new(follow_symlinks);
             for path in paths {
-                visit_dirs(&path, follow_symlinks, &mut seen, &|e| {
+                visitor.visit(&path, &|e| {
                     let message = e.path()
                         .to_str()
                         .expect("failed to convert to unicode")
@@ -112,7 +124,7 @@ impl SocketReader {
                         .into_bytes();
                     write_message(*wfd, &message)
                         .expect("Failed to write message into fd");
-                }).expect("visit_dirs failed");
+                }).expect("Visitor::visit() failed");
             }
         });
 
