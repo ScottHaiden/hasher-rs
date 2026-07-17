@@ -24,7 +24,7 @@ fn not_found(what: &str) -> BoolResult {
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// List of hash algorithms to use
+    /// List of hash algorithms to use.
     #[arg(short = 'C', default_values = ["blake2b512", "sha3-512", "sha512"])]
     hashes: Vec<String>,
 
@@ -44,11 +44,11 @@ struct Args {
     #[arg(short = 'r', group = "job")]
     reset_hashes: bool,
 
-    /// Set task: Set hashes (Find file's hash and set it in metadata)
+    /// Set task: Set hashes (Find file's hash and set it in metadata).
     #[arg(short = 's', group = "job")]
     set_hashes: bool,
 
-    /// Follow symbolic links
+    /// Follow symbolic links.
     #[arg(short = 'L')]
     follow_symlinks: bool,
 
@@ -56,16 +56,21 @@ struct Args {
     #[arg(short = 'R')]
     recurse: bool,
 
-    /// Number of threads
+    /// Number of threads.
     #[arg(short = 't', group = "threads")]
     threads_count: Option<usize>,
 
-    /// Use as many threads as there are CPUs
+    /// Use as many threads as there are CPUs.
     #[arg(short = 'T', group = "threads")]
     all_threads: bool,
 
+    /// Enable verbose mode.
+    #[arg(short = 'v')]
+    verbose: bool,
+
     /// Paths on which to operate.
     paths: Vec<PathBuf>,
+
 }
 
 impl Args {
@@ -99,13 +104,15 @@ impl Args {
 struct HashUtil {
     hashes: Vec<String>,
     producer: Box<dyn finders::Reader>,
+    verbose: bool,
 }
 
 impl HashUtil {
-    fn new(hashes: Vec<String>, producer: Box<dyn finders::Reader>) -> Self {
+    fn new(hashes: Vec<String>, producer: Box<dyn finders::Reader>, verbose: bool) -> Self {
         Self {
             hashes: hashes,
             producer: producer,
+            verbose: verbose,
         }
     }
 
@@ -193,11 +200,16 @@ impl HashUtil {
             let key: String = hash.into();
             let expected: &Vec<u8> = expected_hashes.get(&key).unwrap();
             let actual: &Vec<u8> = actual_hashes.get(&key).unwrap();
-            if expected == actual {
-                println!("{}: {} OK", path.to_str().unwrap(), hash);
-                continue;
+
+            let was_ok = expected == actual;
+            let status = if was_ok { "OK" } else { "Failed" };
+
+            if self.hashes.len() > 1 {
+                println!("{}: {} {}", path.to_str().unwrap(), hash, status);
+            } else {
+                println!("{}: {}", path.to_str().unwrap(), status);
             }
-            println!("{}: {} incorrect", path.to_str().unwrap(), hash);
+
             ret = false;
         }
 
@@ -243,6 +255,7 @@ impl HashUtil {
                 if is_data_not_found_error(&e) { continue; }
                 return Err(Box::new(e));
             }
+            if self.verbose { println!("{}: removed {}", path.display(), hash); }
         }
 
         return Ok(true);
@@ -289,6 +302,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hash_util = HashUtil::new(
         args.hashes,
         finders::create(args.recurse, args.follow_symlinks, args.paths)?,
+        args.verbose,
     );
 
     let result = std::thread::scope(|s| {
