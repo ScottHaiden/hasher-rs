@@ -21,7 +21,7 @@ impl Visitor {
         }
     }
 
-    fn visit<T: Fn(&DirEntry)>(&mut self, dir: &Path, cb: &T) -> io::Result<()> {
+    fn visit<T: Fn(&DirEntry) + Copy>(&mut self, dir: &Path, cb: T) -> io::Result<()> {
         let canon = dir.canonicalize()?;
         if self.seen.contains(&canon) { return Ok(()); }
         self.seen.insert(canon);
@@ -115,14 +115,15 @@ impl SocketReader {
 
         std::thread::spawn(move || {
             let mut visitor = Visitor::new(follow_symlinks);
+            let raw_wfd: c_int = *wfd;
             for path in paths {
-                visitor.visit(&path, &|e: &DirEntry| {
+                visitor.visit(&path, |e| {
                     let message = e.path()
                         .to_str()
                         .expect("failed to convert to unicode")
                         .to_owned()
                         .into_bytes();
-                    write_message(*wfd, &message)
+                    write_message(raw_wfd, &message)
                         .expect("Failed to write message into fd");
                 }).expect("Visitor::visit() failed");
             }
