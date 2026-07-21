@@ -210,7 +210,7 @@ impl HashUtil {
                 println!("{}: {}", path.to_str().unwrap(), status);
             }
 
-            ret = false;
+            ret &= was_ok;
         }
 
         return Ok(ret);
