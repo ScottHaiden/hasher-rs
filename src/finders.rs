@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::error::Error;
-use std::ffi::{c_int, c_void};
 use std::fs::{self, DirEntry};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use libc;
+use crate::transmitter;
 
 struct Visitor {
     seen: HashSet<PathBuf>,
@@ -41,115 +41,47 @@ impl Visitor {
     }
 }
 
-fn write_message(fd: c_int, message: &[u8]) -> io::Result<()> {
-    let amount = unsafe { libc::write(
-        fd,
-        message.as_ptr() as *const c_void,
-        message.len())
-    };
-    if amount < 0 {
-        Err(io::Error::last_os_error())
-    } else if message.len() != usize::try_from(amount).ok().unwrap() {
-        panic!("Unhandled incomplete write");
-    } else {
-        Ok(())
-    }
-}
-
 pub trait Reader: Sync {
     fn read_message(&self) -> Result<Option<String>, Box<dyn Error>>;
 }
 
-struct FdHolder {
-    fd: c_int,
+struct ThreadReader {
+    transmitter: Arc<transmitter::Transmitter<String>>,
 }
 
-impl FdHolder {
-    fn new(fd: c_int) -> Self {
-        Self { fd: fd }
-    }
-
-}
-
-impl std::ops::Deref for FdHolder {
-    type Target = c_int;
-
-    fn deref(&self) -> &c_int { &self.fd }
-}
-
-impl Drop for FdHolder {
-    fn drop(&mut self) {
-        let result = unsafe { libc::close(self.fd) };
-        if result < 0 {
-            let err = io::Error::last_os_error();
-            panic!("close({}) failed ({})", self.fd, err);
-        }
-    }
-}
-
-struct SocketReader {
-    fd: FdHolder,
-}
-
-impl SocketReader {
+impl ThreadReader {
     fn new(follow_symlinks: bool, paths: Vec<PathBuf>) -> io::Result<Self> {
         let paths = if !paths.is_empty() {
             paths
         } else {
             vec![PathBuf::from(".")]
         };
-        let mut fds: [c_int; 2] = [0; 2];
 
-        let result = unsafe {
-            libc::socketpair(
-                libc::AF_UNIX,
-                libc::SOCK_SEQPACKET,
-                0,
-                fds.as_mut_ptr())
-        };
+        let trx = Arc::new(transmitter::Transmitter::<String>::new(1024));
 
-        if result < 0 { return Err(io::Error::last_os_error()) }
-
-        let rfd = FdHolder::new(fds[0]);
-        let wfd = FdHolder::new(fds[1]);
-
+        let write_end = Arc::clone(&trx);
         std::thread::spawn(move || {
             let mut visitor = Visitor::new(follow_symlinks);
-            let raw_wfd: c_int = *wfd;
+            let write_end = &*write_end;
+            let _closer = write_end.closer();
             for path in paths {
                 visitor.visit(&path, |e| {
                     let message = e.path()
                         .to_str()
                         .expect("failed to convert to unicode")
-                        .to_owned()
-                        .into_bytes();
-                    write_message(raw_wfd, &message)
-                        .expect("Failed to write message into fd");
+                        .to_owned();
+                    write_end.put(message);
                 }).expect("Visitor::visit() failed");
             }
         });
 
-        Ok(Self { fd: rfd })
+        Ok(Self { transmitter: trx })
     }
 }
 
-impl Reader for SocketReader {
+impl Reader for ThreadReader {
     fn read_message(&self) -> Result<Option<String>, Box<dyn Error>> {
-        let mut buf = vec![0u8; 4096];
-        let result = unsafe {
-            libc::read(
-                *self.fd,
-                buf.as_mut_ptr() as *mut c_void,
-                buf.len())
-        };
-
-        if result < 0 { return Err(Box::new(io::Error::last_os_error())); }
-        if result == 0 { return Ok(None); }
-
-        buf.resize(result.try_into().unwrap(), 0u8);
-
-        let parsed = String::from_utf8(buf)?;
-        Ok(Some(parsed))
+        return Ok(self.transmitter.get());
     }
 }
 
@@ -197,7 +129,7 @@ pub fn create(
     follow_symlinks: bool,
     paths: Vec<PathBuf>) -> io::Result<Box<dyn Reader>> {
     if recursive {
-        return Ok(Box::new(SocketReader::new(follow_symlinks, paths)?));
+        return Ok(Box::new(ThreadReader::new(follow_symlinks, paths)?));
     }
     return Ok(Box::new(ListReader::new(paths)?));
 }

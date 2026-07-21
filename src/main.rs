@@ -1,5 +1,6 @@
 mod file;
 mod finders;
+mod transmitter;
 
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
