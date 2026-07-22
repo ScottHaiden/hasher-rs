@@ -21,7 +21,8 @@ impl Visitor {
         }
     }
 
-    fn visit<T: Fn(&DirEntry) + Copy>(&mut self, dir: &Path, cb: T) -> io::Result<()> {
+    fn visit<F>(&mut self, dir: &Path, cb: F) -> io::Result<()>
+        where F: Fn(&DirEntry) -> bool + Copy {
         let canon = dir.canonicalize()?;
         if self.seen.contains(&canon) { return Ok(()); }
         self.seen.insert(canon);
@@ -34,7 +35,8 @@ impl Visitor {
                 self.visit(&path, cb)?;
             }
             if path.is_file() {
-                cb(&entry);
+                if cb(&entry) { continue; }
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             }
         }
         Ok(())
@@ -43,6 +45,7 @@ impl Visitor {
 
 pub trait Reader: Sync {
     fn read_message(&self) -> Result<Option<String>, Box<dyn Error>>;
+    fn kill(&self);
 }
 
 struct ThreadReader {
@@ -65,12 +68,12 @@ impl ThreadReader {
             let write_end = &*write_end;
             let _closer = write_end.closer();
             for path in paths {
-                visitor.visit(&path, |e| {
+                visitor.visit(&path, |e| -> bool {
                     let message = e.path()
                         .to_str()
                         .expect("failed to convert to unicode")
                         .to_owned();
-                    write_end.put(message);
+                    write_end.put(message)
                 }).expect("Visitor::visit() failed");
             }
         });
@@ -83,6 +86,8 @@ impl Reader for ThreadReader {
     fn read_message(&self) -> Result<Option<String>, Box<dyn Error>> {
         return Ok(self.transmitter.get());
     }
+
+    fn kill(&self) { self.transmitter.kill(); }
 }
 
 struct ListReader {
@@ -122,6 +127,8 @@ impl Reader for ListReader {
             .to_owned();
         return Ok(Some(path));
     }
+
+    fn kill(&self) {}
 }
 
 pub fn create(

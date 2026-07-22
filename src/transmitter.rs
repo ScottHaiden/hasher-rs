@@ -17,8 +17,14 @@ impl<'a> Drop for ScopeNotifier<'a> {
     }
 }
 
+struct TransmitterState<T> {
+    buffer: VecDeque<T>,
+    closed: bool,
+    dead: bool,
+}
+
 pub struct Transmitter<T> {
-    state: Mutex<(VecDeque<T>, bool)>,
+    state: Mutex<TransmitterState<T>>,
     cv: Condvar,
     capacity: usize,
 }
@@ -42,8 +48,13 @@ impl<'a, T> Drop for TransmitterCloser<'a, T> {
 
 impl<T> Transmitter<T> {
     pub fn new(size: usize) -> Self {
+        let state = TransmitterState {
+            buffer: VecDeque::with_capacity(size),
+            closed: false,
+            dead: false,
+        };
         Self {
-            state: Mutex::new((VecDeque::with_capacity(size), false)),
+            state: Mutex::new(state),
             cv: Condvar::new(),
             capacity: size,
         }
@@ -61,38 +72,46 @@ impl<T> Transmitter<T> {
         let _notifier = self.notifier();
         let mut lock = self.state.lock().unwrap();
         loop {
-            let (buf, closed) = &*lock;
-            if *closed { return false; }
-            if buf.len() < self.capacity { break; }
+            let state = &*lock;
+            if state.closed || state.dead { return false; }
+            if state.buffer.len() < self.capacity { break; }
             lock = self.cv.wait(lock).unwrap();
         }
 
-        let (buf, closed) = &mut *lock;
-        assert!(!*closed, "closed at time of put()!");
-        buf.push_back(item);
+        let state = &mut *lock;
+        assert!(!state.closed, "closed at time of put()!");
+        state.buffer.push_back(item);
         true
     }
 
     pub fn close(&self) {
         let _notifier = self.notifier();
         let mut lock = self.state.lock().unwrap();
-        let (_buf, closed) = &mut *lock;
-        *closed = true;
+        let state = &mut *lock;
+        state.closed = true;
     }
 
     pub fn get(&self) -> Option<T> {
         let _notifier = self.notifier();
         let mut lock = self.state.lock().unwrap();
         loop {
-            let (buf, closed) = &*lock;
-            if !buf.is_empty() || *closed { break; }
+            let state = &*lock;
+            if state.dead { return None; }
+            if !state.buffer.is_empty() || state.closed { break; }
             lock = self.cv.wait(lock).unwrap();
         }
-        let (buf, closed) = &mut *lock;
-        if buf.is_empty() {
-            assert!(*closed, "empty and not closed after wait!");
+        let state = &mut *lock;
+        if state.buffer.is_empty() {
+            assert!(state.closed, "empty and not closed after wait!");
             return None;
         }
-        Some(buf.pop_front().unwrap())
+        Some(state.buffer.pop_front().unwrap())
+    }
+
+    pub fn kill(&self) {
+        let _notifier = self.notifier();
+        let mut lock = self.state.lock().unwrap();
+        let state = &mut *lock;
+        state.dead = true;
     }
 }

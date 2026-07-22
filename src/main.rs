@@ -275,6 +275,7 @@ impl HashUtil {
                 Ok(result) => ret &= result,
                 Err(e) => {
                     eprintln!("Worker encountered error: {e}");
+                    self.producer.kill();
                     return false;
                 },
             }
