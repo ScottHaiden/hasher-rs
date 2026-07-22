@@ -194,6 +194,8 @@ impl HashUtil {
 
         let hashes_to_check: Vec<&str> = expected_hashes.keys().map(String::as_str).collect();
 
+        if hashes_to_check.is_empty() { return Ok(true); }
+
         let actual_hashes: HashMap<String, Vec<u8>> = file.find_hashes(&hashes_to_check)?;
 
         let mut ret = true;
