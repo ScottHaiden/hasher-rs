@@ -44,12 +44,12 @@ impl Visitor {
 }
 
 pub trait Reader: Sync {
-    fn read_message(&self) -> Result<Option<String>, Box<dyn Error>>;
+    fn read_message(&self) -> Result<Option<PathBuf>, Box<dyn Error>>;
     fn kill(&self);
 }
 
 struct ThreadReader {
-    transmitter: Arc<transmitter::Transmitter<String>>,
+    transmitter: Arc<transmitter::Transmitter<PathBuf>>,
 }
 
 impl ThreadReader {
@@ -60,7 +60,7 @@ impl ThreadReader {
             vec![PathBuf::from(".")]
         };
 
-        let trx = Arc::new(transmitter::Transmitter::<String>::new(1024));
+        let trx = Arc::new(transmitter::Transmitter::<PathBuf>::new(1024));
 
         let write_end = Arc::clone(&trx);
         std::thread::spawn(move || {
@@ -68,12 +68,8 @@ impl ThreadReader {
             let write_end = &*write_end;
             let _closer = write_end.closer();
             for path in paths {
-                visitor.visit(&path, |e| -> bool {
-                    let message = e.path()
-                        .to_str()
-                        .expect("failed to convert to unicode")
-                        .to_owned();
-                    write_end.put(message)
+                visitor.visit(&path, |entry| -> bool {
+                    write_end.put(entry.path())
                 }).expect("Visitor::visit() failed");
             }
         });
@@ -83,7 +79,7 @@ impl ThreadReader {
 }
 
 impl Reader for ThreadReader {
-    fn read_message(&self) -> Result<Option<String>, Box<dyn Error>> {
+    fn read_message(&self) -> Result<Option<PathBuf>, Box<dyn Error>> {
         return Ok(self.transmitter.get());
     }
 
@@ -118,13 +114,10 @@ impl ListReader {
 }
 
 impl Reader for ListReader {
-    fn read_message(&self) -> Result<Option<String>, Box<dyn Error>> {
+    fn read_message(&self) -> Result<Option<PathBuf>, Box<dyn Error>> {
         let idx = self.get_next();
         if idx.is_none() { return Ok(None); }
-        let path = self.paths[idx.unwrap()]
-            .to_str()
-            .expect("decode failed")
-            .to_owned();
+        let path = self.paths[idx.unwrap()].clone();
         return Ok(Some(path));
     }
 
