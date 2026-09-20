@@ -312,9 +312,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = std::thread::scope(|s| {
         let mut workers = Vec::new();
 
-        for _ in 1..num_workers {
+        for i in 1..num_workers {
             let hash_util = &hash_util;
-            workers.push(s.spawn(move || hash_util.run_loop(&job)));
+            workers.push(std::thread::Builder::new()
+                .name(format!("worker-{i:02x}").to_string())
+                .spawn_scoped(s, move || hash_util.run_loop(&job))
+                .expect("Spawn thread failed")
+            );
         }
 
         let mut ret = hash_util.run_loop(&job);

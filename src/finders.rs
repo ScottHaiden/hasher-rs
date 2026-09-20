@@ -63,16 +63,18 @@ impl ThreadReader {
         let trx = Arc::new(transmitter::Transmitter::<PathBuf>::new(1024));
 
         let write_end = Arc::clone(&trx);
-        std::thread::spawn(move || {
-            let mut visitor = Visitor::new(follow_symlinks);
-            let write_end = &*write_end;
-            let _closer = write_end.closer();
-            for path in paths {
-                visitor.visit(&path, |entry| -> bool {
-                    write_end.put(entry.path())
-                }).expect("Visitor::visit() failed");
-            }
-        });
+        std::thread::Builder::new()
+            .name("file-finder".to_string())
+            .spawn(move || {
+                let mut visitor = Visitor::new(follow_symlinks);
+                let write_end = &*write_end;
+                let _closer = write_end.closer();
+                for path in paths {
+                    visitor.visit(&path, |entry| -> bool {
+                        write_end.put(entry.path())
+                    }).expect("Visitor::visit() failed");
+                }
+            })?;
 
         Ok(Self { transmitter: trx })
     }
